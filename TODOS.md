@@ -1,22 +1,22 @@
 # TODOs
 
-- Finish SQLAlchemy integration and fix remaining type-check issues.
-- Add Pydantic Settings YAML config loading to scraper/database entrypoints.
-- Add `config.example.yaml` documentation to README.
-- Add SQLite persistence command for `scrape-with-details`.
-- Add `crawl_runs` creation/update around scraper runs.
-- Add rate limiting and jitter between detail page requests.
-- Add retry/backoff handling for HTTP errors and Cloudflare challenge responses.
-- Add deduplication policy for stream observations.
-- Add odds snapshot retention policy.
-- Add parser for `/matches/history`.
-- Add score parsing for finished matches.
-- Add map-level score parsing when available.
-- Add CLI command structure, likely with Typer.
-- Add scheduled-run example using cron or systemd timer.
-- Add database migration setup with Alembic.
-- Add tests for settings YAML/environment override behavior.
-- Add tests for repository upsert edge cases.
-- Add docs for safe crawling limits and expected request volume.
-- Decide whether raw HTML should be stored, and for how long.
-- Decide priority games for first production crawl.
+- [x] Finish SQLAlchemy integration and fix remaining type-check issues.
+- [ ] Add Pydantic Settings YAML config loading to scraper/database entrypoints.
+- [ ] Add `config.example.yaml` documentation to README.
+- [ ] Add SQLite persistence command for `scrape-with-details`.
+- [ ] Add `crawl_runs` creation/update around scraper runs.
+- [ ] Add rate limiting and jitter between detail page requests.
+- [ ] Add retry/backoff handling for HTTP errors and Cloudflare challenge responses.
+- [ ] Add deduplication policy for stream observations.
+- [ ] Add odds snapshot retention policy.
+- [ ] Add parser for `/matches/history`.
+- [ ] Add score parsing for finished matches.
+- [ ] Add map-level score parsing when available.
+- [x] Add CLI command structure, likely with Typer.
+- [ ] Add scheduled-run example using cron or systemd timer.
+- [ ] Add database migration setup with Alembic.
+- [ ] Add tests for settings YAML/environment override behavior.
+- [x] Add tests for repository upsert edge cases.
+- [ ] Add docs for safe crawling limits and expected request volume.
+- [ ] Decide whether raw HTML should be stored, and for how long.
+- [ ] Decide priority games for first production crawl.
