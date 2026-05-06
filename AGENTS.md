@@ -16,8 +16,8 @@ uv sync
 uv run pytest
 uv run ruff check .
 uv run ty check .
-uv run python -m egw_scout.scraper /matches/upcoming-matches --limit 3
-uv run python -m egw_scout.scraper /matches/upcoming-matches --details --limit 2
+uv run egw-scout scrape /matches/upcoming-matches --limit 3
+uv run egw-scout scrape /matches/upcoming-matches --details --limit 2
 ```
 
 Add dependencies with `uv add`; do not use `pip install` to mutate the environment.

@@ -8,7 +8,6 @@ saved HTML for parsing.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import re
@@ -804,37 +803,3 @@ def _clean_string(value: object) -> str | None:
         return None
     normalized = " ".join(value.split())
     return normalized or None
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Fetch and parse EGamersWorld pages.")
-    parser.add_argument("path", nargs="?", default="/matches/upcoming-matches")
-    parser.add_argument("--limit", type=int, default=None, help="Limit the number of matches printed or detailed.")
-    parser.add_argument("--details", action="store_true", help="Fetch match detail pages for listing results.")
-    args = parser.parse_args(argv)
-
-    try:
-        with EgamersWorldScraper() as scraper:
-            if args.details and _looks_like_match_url(args.path):
-                result: BaseSchema = scraper.scrape_match_detail(args.path)
-            elif args.details:
-                result = scraper.scrape_page_with_details(args.path, limit=args.limit)
-            else:
-                page = scraper.scrape(args.path)
-                if args.limit is not None:
-                    page = page.model_copy(update={"matches": page.matches[: args.limit]})
-                result = page
-    except AccessBlockedError as exc:
-        print(json.dumps({"ok": False, "error": str(exc), "url": exc.url}, ensure_ascii=False, indent=2))
-        return 2
-
-    print(result.model_dump_json(indent=2))
-    return 0
-
-
-def _looks_like_match_url(path_or_url: str) -> bool:
-    return "/match/" in urlparse(path_or_url).path
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -30,7 +30,7 @@ Implemented prototype:
 - CLI entrypoint:
 
 ```bash
-uv run python -m egw_scout.scraper /matches/upcoming-matches --details --limit 2
+uv run egw-scout scrape /matches/upcoming-matches --details --limit 2
 ```
 
 Currently extracted:
@@ -478,7 +478,7 @@ Recommended first choice:
 Example cron-style schedule:
 
 ```text
-*/20 * * * * uv run python -m egw_scout.scraper /matches/upcoming-matches --details --limit 50
+*/20 * * * * uv run egw-scout scrape /matches/upcoming-matches --details --limit 50
 ```
 
 Better version after DB scheduling:
