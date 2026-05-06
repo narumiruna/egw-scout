@@ -1,0 +1,72 @@
+[project]
+name            = "egw-scout"
+version         = "0.1.0"
+description     = ""
+readme          = "README.md"
+requires-python = ">=3.14"
+authors         = [{ name = "narumi", email = "toucans-cutouts0f@icloud.com" }]
+dependencies    = [
+  "alembic>=1.18.4",
+  "beautifulsoup4>=4.14.3",
+  "httpx>=0.28.1",
+  "pydantic>=2.13.3",
+  "pydantic-settings>=2.14.0",
+  "sqlalchemy>=2.0.49",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0.3",
+  "pytest-cov>=7.1.0",
+  "ruff>=0.15.12",
+  "ty>=0.0.34",
+]
+
+[build-system]
+requires      = ["uv_build>=0.9.30,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+  "ANN",    # flake8-annotations
+  "ASYNC",  # flake8-async
+  "B",      # flake8-bugbear
+  "BLE",    # flake8-blind-except
+  "C",      # flake8-comprehensions
+  "DTZ",    # flake8-datetimez
+  "E",      # pycodestyle errors
+  "F",      # pyflakes
+  "FURB",   # refurb
+  "I",      # isort
+  "G",      # flake8-logging-format
+  "N",      # pep8-naming
+  "PERF",   # perflint
+  "PIE",    # flake8-pie
+  "PTH",    # flake8-use-pathlib
+  "RET",    # flake8-return
+  "RSE",    # flake8-raise
+  "RUF",    # ruff-specific rules
+  "SIM",    # flake8-simplify
+  "TID",    # flake8-tidy-imports
+  "UP",     # pyupgrade
+  "W",      # pycodestyle warnings
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**.py" = ["ANN", "TRY", "PERF"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.tombi.files]
+exclude = ["uv.lock"]
+
+[tool.tombi.format.rules]
+key-value-equals-sign-alignment = true
+trailing-comment-alignment      = true
+
+[tool.ty.rules]
+unresolved-import = "ignore"

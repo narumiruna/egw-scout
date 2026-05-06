@@ -1,0 +1,20 @@
+database:
+  # SQLite is recommended for the first local scheduled scraper.
+  url: sqlite:///data/egw_scout.sqlite3
+  echo: false
+
+scraper:
+  base_url: https://egamersworld.com/
+  timeout_seconds: 20
+  accept_language: en-US,en;q=0.9
+  request_delay_seconds: 2
+  request_jitter_seconds: 1
+  max_details_per_run: 50
+  user_agent: >-
+    Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36
+    (KHTML, like Gecko) Chrome/120.0 Safari/537.36
+
+scheduler:
+  upcoming_interval_minutes: 20
+  history_interval_minutes: 60
+  live_interval_minutes: 3
