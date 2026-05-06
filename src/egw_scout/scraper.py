@@ -408,9 +408,7 @@ def _team_from_tag(tag: Tag, page_url: str) -> Team | None:
     href = tag.get("href")
     team_url = urljoin(page_url, href) if isinstance(href, str) else None
     logo = _image_src(_find_with_class(tag, "match_teamLogo__")) or _image_src(_find_with_class(tag, "styles_logo__"))
-    flag_url = _image_src(_find_with_class(tag, "match_flag__")) or _image_src(
-        _find_with_class(tag, "styles_flag__")
-    )
+    flag_url = _image_src(_find_with_class(tag, "match_flag__")) or _image_src(_find_with_class(tag, "styles_flag__"))
     country = _country_from_flag_url(flag_url)
     return Team.model_validate(
         {

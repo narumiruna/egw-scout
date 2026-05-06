@@ -22,8 +22,7 @@ class ScraperSettings(BaseSettings):
     base_url: str = "https://egamersworld.com/"
     timeout_seconds: float = Field(default=20.0, gt=0)
     user_agent: str = (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
     )
     accept_language: str = "en-US,en;q=0.9"
     request_delay_seconds: float = Field(default=2.0, ge=0)
