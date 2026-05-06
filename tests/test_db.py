@@ -89,36 +89,42 @@ def make_detail() -> MatchDetail:
 
 def test_repository_persists_match_detail() -> None:
     engine = create_db_engine("sqlite:///:memory:")
-    create_tables(engine)
-    session_factory = create_session_factory(engine)
+    try:
+        create_tables(engine)
+        session_factory = create_session_factory(engine)
 
-    with session_scope(session_factory) as session:
-        record = ScraperRepository(session).save_match_detail(make_detail())
-        match_id = record.id
+        with session_scope(session_factory) as session:
+            record = ScraperRepository(session).save_match_detail(make_detail())
+            match_id = record.id
 
-    with session_scope(session_factory) as session:
-        match = session.scalar(select(MatchRecord).where(MatchRecord.id == match_id))
-        assert match is not None
-        assert match.title == "Team Alpha VS Team Beta"
-        assert match.game == "dota2"
-        assert match.best_of == 3
-        assert match.h2h_home_wins == 3
-        assert session.scalars(select(TeamRecord)).all()
-        assert len(session.scalars(select(MatchLineupRecord)).all()) == 2
-        assert len(session.scalars(select(StreamRecord)).all()) == 1
-        assert len(session.scalars(select(OddsSnapshotRecord)).all()) == 2
+        with session_scope(session_factory) as session:
+            match = session.scalar(select(MatchRecord).where(MatchRecord.id == match_id))
+            assert match is not None
+            assert match.title == "Team Alpha VS Team Beta"
+            assert match.game == "dota2"
+            assert match.best_of == 3
+            assert match.h2h_home_wins == 3
+            assert session.scalars(select(TeamRecord)).all()
+            assert len(session.scalars(select(MatchLineupRecord)).all()) == 2
+            assert len(session.scalars(select(StreamRecord)).all()) == 1
+            assert len(session.scalars(select(OddsSnapshotRecord)).all()) == 2
+    finally:
+        engine.dispose()
 
 
 def test_repository_upserts_match_but_keeps_odds_snapshots() -> None:
     engine = create_db_engine("sqlite:///:memory:")
-    create_tables(engine)
-    session_factory = create_session_factory(engine)
+    try:
+        create_tables(engine)
+        session_factory = create_session_factory(engine)
 
-    with session_scope(session_factory) as session:
-        repository = ScraperRepository(session)
-        repository.save_match_detail(make_detail())
-        repository.save_match_detail(make_detail())
+        with session_scope(session_factory) as session:
+            repository = ScraperRepository(session)
+            repository.save_match_detail(make_detail())
+            repository.save_match_detail(make_detail())
 
-    with session_scope(session_factory) as session:
-        assert len(session.scalars(select(MatchRecord)).all()) == 1
-        assert len(session.scalars(select(OddsSnapshotRecord)).all()) == 4
+        with session_scope(session_factory) as session:
+            assert len(session.scalars(select(MatchRecord)).all()) == 1
+            assert len(session.scalars(select(OddsSnapshotRecord)).all()) == 4
+    finally:
+        engine.dispose()
