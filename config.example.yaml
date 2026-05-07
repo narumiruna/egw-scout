@@ -10,6 +10,10 @@ scraper:
   request_delay_seconds: 2
   request_jitter_seconds: 1
   max_details_per_run: 50
+  max_concurrent_detail_requests: 3
+  retry_attempts: 3
+  retry_wait_min_seconds: 1
+  retry_wait_max_seconds: 10
   user_agent: >-
     Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36
     (KHTML, like Gecko) Chrome/120.0 Safari/537.36

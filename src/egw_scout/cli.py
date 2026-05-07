@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Annotated
@@ -14,6 +15,7 @@ from rich.text import Text
 
 from egw_scout.models import MatchDetail
 from egw_scout.scraper import AccessBlockedError
+from egw_scout.scraper import AsyncEgamersWorldScraper
 from egw_scout.scraper import DetailedScrapedPage
 from egw_scout.scraper import EgamersWorldScraper
 from egw_scout.scraper import PageMetadata
@@ -46,20 +48,23 @@ def scrape(
     ] = False,
     verbose: Annotated[
         bool,
-        typer.Option("--verbose", "-v", help="Enable debug logging, including per-query timings."),
+        typer.Option("--verbose", "-v", help="Enable scraper timing logs."),
     ] = False,
 ) -> None:
     """Scrape a listing or match page."""
     _configure_logging(verbose)
     try:
-        with EgamersWorldScraper() as scraper:
-            if details and _looks_like_match_path(path):
-                result: ScrapedPage | DetailedScrapedPage | MatchDetail = scraper.scrape_match_detail(path)
-            elif details:
-                result = scraper.scrape_page_with_details(path, limit=limit)
-            else:
-                page = scraper.scrape(path)
-                result = page.model_copy(update={"matches": page.matches[:limit]}) if limit is not None else page
+        if details and not _looks_like_match_path(path):
+            result: ScrapedPage | DetailedScrapedPage | MatchDetail = asyncio.run(
+                _scrape_page_with_details(path, limit)
+            )
+        else:
+            with EgamersWorldScraper() as scraper:
+                if details:
+                    result = scraper.scrape_match_detail(path)
+                else:
+                    page = scraper.scrape(path)
+                    result = page.model_copy(update={"matches": page.matches[:limit]}) if limit is not None else page
     except AccessBlockedError as exc:
         _print_access_blocked(exc)
         raise typer.Exit(2) from exc
@@ -79,6 +84,11 @@ def scrape(
 @app.callback()
 def main() -> None:
     """EGW Scout command line interface."""
+
+
+async def _scrape_page_with_details(path: str, limit: int | None) -> DetailedScrapedPage:
+    async with AsyncEgamersWorldScraper() as scraper:
+        return await scraper.scrape_page_with_details(path, limit=limit)
 
 
 def _print_scraped_page(page: ScrapedPage) -> None:
@@ -174,7 +184,10 @@ def _print_metadata(metadata: PageMetadata) -> None:
 def _configure_logging(verbose: bool) -> None:
     if not verbose:
         return
-    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(name)s:%(message)s", force=True)
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s:%(name)s:%(message)s", force=True)
+    logging.getLogger("egw_scout").setLevel(logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _print_access_blocked(exc: AccessBlockedError) -> None:

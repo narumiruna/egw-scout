@@ -28,6 +28,10 @@ class ScraperSettings(BaseSettings):
     request_delay_seconds: float = Field(default=2.0, ge=0)
     request_jitter_seconds: float = Field(default=1.0, ge=0)
     max_details_per_run: int = Field(default=50, ge=1)
+    max_concurrent_detail_requests: int = Field(default=3, ge=1)
+    retry_attempts: int = Field(default=3, ge=1)
+    retry_wait_min_seconds: float = Field(default=1.0, ge=0)
+    retry_wait_max_seconds: float = Field(default=10.0, ge=0)
 
 
 class SchedulerSettings(BaseSettings):

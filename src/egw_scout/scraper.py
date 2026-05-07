@@ -8,6 +8,7 @@ saved HTML for parsing.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -26,6 +27,12 @@ from bs4 import Tag
 from pydantic import Field
 from pydantic import HttpUrl
 from pydantic import ValidationError
+from tenacity import AsyncRetrying
+from tenacity import Retrying
+from tenacity import before_sleep_log
+from tenacity import retry_if_exception_type
+from tenacity import stop_after_attempt
+from tenacity import wait_random_exponential
 
 from egw_scout.models import BaseSchema
 from egw_scout.models import BettingOdd
@@ -47,6 +54,7 @@ from egw_scout.settings import load_settings
 MATCH_LINK_RE = re.compile(r"/(?:matches|events|news|tips)(?:/|$)", re.IGNORECASE)
 TEAM_SEPARATOR_RE = re.compile(r"\s+(?:vs\.?|v\.?|versus)\s+", re.IGNORECASE)
 BEST_OF_RE = re.compile(r"\bbo\s*([1357])\b", re.IGNORECASE)
+RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 logger = logging.getLogger(__name__)
 
 
@@ -146,13 +154,31 @@ class EgamersWorldScraper:
         """Fetch a match listing and then fetch detail pages for its matches."""
         page = self.scrape(path_or_url)
         matches = page.matches[:limit] if limit is not None else page.matches
-        details = tuple(self.scrape_match_detail(str(match.url)) for match in matches if match.url is not None)
-        return DetailedScrapedPage(metadata=page.metadata, match_details=details)
+        details: list[MatchDetail] = []
+        for match in matches:
+            if match.url is None:
+                continue
+            detail = self.scrape_match_detail(str(match.url))
+            if self.query_timings:
+                logger.info(
+                    "Match query completed in %.1f ms: %s (%s)",
+                    self.query_timings[-1].elapsed_seconds * 1000,
+                    detail.match.title,
+                    match.url,
+                )
+            details.append(detail)
+        return DetailedScrapedPage(metadata=page.metadata, match_details=tuple(details))
 
     def _absolute_url(self, path_or_url: str) -> str:
         return urljoin(self.base_url, path_or_url)
 
     def _get(self, url: str) -> httpx.Response:
+        for attempt in _retrying(self.settings):
+            with attempt:
+                return self._get_once(url)
+        raise RuntimeError("unreachable retry state")
+
+    def _get_once(self, url: str) -> httpx.Response:
         started_at = perf_counter()
         try:
             response = self.client.get(url)
@@ -162,34 +188,181 @@ class EgamersWorldScraper:
             logger.debug("HTTP query failed after %.1f ms: GET %s", elapsed_seconds * 1000, url)
             raise
 
-        try:
-            elapsed_seconds = response.elapsed.total_seconds()
-        except RuntimeError:
-            elapsed_seconds = perf_counter() - started_at
-        self.query_timings.append(
-            QueryTiming(
-                method="GET",
-                url=str(response.url),
-                status_code=response.status_code,
-                elapsed_seconds=elapsed_seconds,
-            )
-        )
+        timing = _record_query_timing(self.query_timings, response, started_at)
         logger.debug(
             "HTTP query completed in %.1f ms: GET %s -> %s",
-            elapsed_seconds * 1000,
+            timing.elapsed_seconds * 1000,
             response.url,
             response.status_code,
         )
+        self._raise_for_blocked_response(response)
+        _raise_for_retryable_response(response)
         return response
 
     @staticmethod
     def _raise_for_blocked_response(response: httpx.Response) -> None:
-        text_head = response.text[:2048]
-        cf_mitigated = response.headers.get("cf-mitigated") == "challenge"
-        challenge_title = "<title>Just a moment...</title>" in text_head
-        challenge_text = "Enable JavaScript and cookies to continue" in text_head
-        if cf_mitigated or challenge_title or challenge_text:
-            raise AccessBlockedError(str(response.url), response.status_code, "Cloudflare challenge page")
+        _raise_for_blocked_response(response)
+
+
+class AsyncEgamersWorldScraper:
+    """Async HTTP scraper with bounded detail-page concurrency and retry/backoff."""
+
+    def __init__(self, settings: AppSettings | None = None, client: httpx.AsyncClient | None = None) -> None:
+        self.settings = settings or load_settings()
+        self.base_url = str(self.settings.scraper.base_url).rstrip("/") + "/"
+        self.query_timings: list[QueryTiming] = []
+        self._owns_client = client is None
+        self.client = client or httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=self.settings.scraper.timeout_seconds,
+            headers={
+                "User-Agent": self.settings.scraper.user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": self.settings.scraper.accept_language,
+            },
+        )
+
+    async def close(self) -> None:
+        """Close the underlying async HTTP client."""
+        if self._owns_client:
+            await self.client.aclose()
+
+    async def __aenter__(self) -> AsyncEgamersWorldScraper:
+        return self
+
+    async def __aexit__(self, *_exc_info: object) -> None:
+        await self.close()
+
+    async def scrape(self, path_or_url: str = "/") -> ScrapedPage:
+        """Fetch and parse one listing or content page asynchronously."""
+        url = self._absolute_url(path_or_url)
+        response = await self._get(url)
+        _raise_for_blocked_response(response)
+        response.raise_for_status()
+        return parse_html(response.text, str(response.url))
+
+    async def scrape_match_detail(self, path_or_url: str) -> MatchDetail:
+        """Fetch and parse one match detail page asynchronously."""
+        url = self._absolute_url(path_or_url)
+        response = await self._get(url)
+        _raise_for_blocked_response(response)
+        response.raise_for_status()
+        return parse_match_detail_html(response.text, str(response.url))
+
+    async def scrape_page_with_details(
+        self,
+        path_or_url: str = "/matches/upcoming-matches",
+        limit: int | None = None,
+    ) -> DetailedScrapedPage:
+        """Fetch a listing, then fetch match details concurrently with bounded concurrency."""
+        page = await self.scrape(path_or_url)
+        matches = page.matches[:limit] if limit is not None else page.matches
+        semaphore = asyncio.Semaphore(self.settings.scraper.max_concurrent_detail_requests)
+        details = await asyncio.gather(*(self._scrape_match_detail_for_listing(match, semaphore) for match in matches))
+        return DetailedScrapedPage(metadata=page.metadata, match_details=tuple(detail for detail in details if detail))
+
+    def _absolute_url(self, path_or_url: str) -> str:
+        return urljoin(self.base_url, path_or_url)
+
+    async def _scrape_match_detail_for_listing(
+        self,
+        match: MatchInfo,
+        semaphore: asyncio.Semaphore,
+    ) -> MatchDetail | None:
+        if match.url is None:
+            return None
+        async with semaphore:
+            started_at = perf_counter()
+            detail = await self.scrape_match_detail(str(match.url))
+            logger.info(
+                "Match query completed in %.1f ms: %s (%s)",
+                (perf_counter() - started_at) * 1000,
+                detail.match.title,
+                match.url,
+            )
+            return detail
+
+    async def _get(self, url: str) -> httpx.Response:
+        async for attempt in _async_retrying(self.settings):
+            with attempt:
+                return await self._get_once(url)
+        raise RuntimeError("unreachable retry state")
+
+    async def _get_once(self, url: str) -> httpx.Response:
+        started_at = perf_counter()
+        try:
+            response = await self.client.get(url)
+        except httpx.HTTPError:
+            elapsed_seconds = perf_counter() - started_at
+            self.query_timings.append(QueryTiming(method="GET", url=url, elapsed_seconds=elapsed_seconds))
+            logger.debug("HTTP query failed after %.1f ms: GET %s", elapsed_seconds * 1000, url)
+            raise
+
+        timing = _record_query_timing(self.query_timings, response, started_at)
+        logger.debug(
+            "HTTP query completed in %.1f ms: GET %s -> %s",
+            timing.elapsed_seconds * 1000,
+            response.url,
+            response.status_code,
+        )
+        _raise_for_blocked_response(response)
+        _raise_for_retryable_response(response)
+        return response
+
+
+def _retrying(settings: AppSettings) -> Retrying:
+    return Retrying(
+        reraise=True,
+        stop=stop_after_attempt(settings.scraper.retry_attempts),
+        wait=wait_random_exponential(
+            min=settings.scraper.retry_wait_min_seconds,
+            max=settings.scraper.retry_wait_max_seconds,
+        ),
+        retry=retry_if_exception_type((httpx.HTTPError, AccessBlockedError)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+
+
+def _async_retrying(settings: AppSettings) -> AsyncRetrying:
+    return AsyncRetrying(
+        reraise=True,
+        stop=stop_after_attempt(settings.scraper.retry_attempts),
+        wait=wait_random_exponential(
+            min=settings.scraper.retry_wait_min_seconds,
+            max=settings.scraper.retry_wait_max_seconds,
+        ),
+        retry=retry_if_exception_type((httpx.HTTPError, AccessBlockedError)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+
+
+def _record_query_timing(timings: list[QueryTiming], response: httpx.Response, started_at: float) -> QueryTiming:
+    try:
+        elapsed_seconds = response.elapsed.total_seconds()
+    except RuntimeError:
+        elapsed_seconds = perf_counter() - started_at
+    timing = QueryTiming(
+        method="GET",
+        url=str(response.url),
+        status_code=response.status_code,
+        elapsed_seconds=elapsed_seconds,
+    )
+    timings.append(timing)
+    return timing
+
+
+def _raise_for_retryable_response(response: httpx.Response) -> None:
+    if response.status_code in RETRYABLE_STATUS_CODES:
+        response.raise_for_status()
+
+
+def _raise_for_blocked_response(response: httpx.Response) -> None:
+    text_head = response.text[:2048]
+    cf_mitigated = response.headers.get("cf-mitigated") == "challenge"
+    challenge_title = "<title>Just a moment...</title>" in text_head
+    challenge_text = "Enable JavaScript and cookies to continue" in text_head
+    if cf_mitigated or challenge_title or challenge_text:
+        raise AccessBlockedError(str(response.url), response.status_code, "Cloudflare challenge page")
 
 
 def parse_html(html: str, url: str) -> ScrapedPage:

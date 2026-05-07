@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import httpx
@@ -5,6 +6,7 @@ import httpx
 from egw_scout import EsportGame
 from egw_scout import MatchStatus
 from egw_scout import TeamSide
+from egw_scout.scraper import AsyncEgamersWorldScraper
 from egw_scout.scraper import EgamersWorldScraper
 from egw_scout.scraper import parse_html
 from egw_scout.scraper import parse_match_detail_html
@@ -90,6 +92,63 @@ def test_scraper_records_query_timing_for_each_http_request(caplog) -> None:
     assert timing.elapsed_seconds >= 0
     assert "HTTP query completed in" in caplog.text
     assert "GET https://example.test/matches/upcoming-matches -> 200" in caplog.text
+
+
+def test_async_scraper_retries_match_detail_requests_with_tenacity(caplog) -> None:
+    calls_by_path: dict[str, int] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls_by_path[request.url.path] = calls_by_path.get(request.url.path, 0) + 1
+        if request.url.path == "/matches/team-alpha-vs-team-beta-abc123" and calls_by_path[request.url.path] == 1:
+            return httpx.Response(503, text="try again", request=request)
+        return httpx.Response(200, html=HTML, request=request)
+
+    settings = AppSettings(
+        scraper=ScraperSettings(
+            base_url="https://example.test/",
+            max_concurrent_detail_requests=2,
+            retry_attempts=2,
+            retry_wait_min_seconds=0,
+            retry_wait_max_seconds=0,
+        )
+    )
+    async def run_scrape() -> list[int | None]:
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True) as client,
+            AsyncEgamersWorldScraper(settings=settings, client=client) as async_scraper,
+        ):
+            page = await async_scraper.scrape_page_with_details("/matches/upcoming-matches", limit=1)
+            assert len(page.match_details) == 1
+            return [timing.status_code for timing in async_scraper.query_timings]
+
+    with caplog.at_level(logging.INFO, logger="egw_scout.scraper"):
+        status_codes = asyncio.run(run_scrape())
+
+    assert calls_by_path["/matches/upcoming-matches"] == 1
+    assert calls_by_path["/matches/team-alpha-vs-team-beta-abc123"] == 2
+    assert status_codes == [200, 503, 200]
+    assert "Retrying" in caplog.text
+    assert "Match query completed in" in caplog.text
+
+
+def test_scraper_logs_each_match_query_timing_at_info(caplog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, html=HTML, request=request)
+
+    settings = AppSettings(scraper=ScraperSettings(base_url="https://example.test/"))
+    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    scraper = EgamersWorldScraper(settings=settings, client=client)
+
+    try:
+        with caplog.at_level(logging.INFO, logger="egw_scout.scraper"):
+            scraper.scrape_page_with_details("/matches/upcoming-matches", limit=1)
+    finally:
+        client.close()
+
+    assert len(scraper.query_timings) == 2
+    assert "Match query completed in" in caplog.text
+    assert "Team Alpha vs Team Beta BO3" in caplog.text
+    assert "https://egamersworld.com/matches/team-alpha-vs-team-beta-abc123" in caplog.text
 
 
 def test_parse_match_detail_html_extracts_detail_sections() -> None:
