@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Iterable
 from datetime import UTC
 from datetime import datetime
+from time import perf_counter
 from typing import cast
 from urllib.parse import urljoin
 from urllib.parse import urlparse
@@ -45,6 +47,7 @@ from egw_scout.settings import load_settings
 MATCH_LINK_RE = re.compile(r"/(?:matches|events|news|tips)(?:/|$)", re.IGNORECASE)
 TEAM_SEPARATOR_RE = re.compile(r"\s+(?:vs\.?|v\.?|versus)\s+", re.IGNORECASE)
 BEST_OF_RE = re.compile(r"\bbo\s*([1357])\b", re.IGNORECASE)
+logger = logging.getLogger(__name__)
 
 
 class AccessBlockedError(RuntimeError):
@@ -81,13 +84,24 @@ class DetailedScrapedPage(BaseSchema):
     match_details: tuple[MatchDetail, ...] = Field(default_factory=tuple)
 
 
+class QueryTiming(BaseSchema):
+    """Timing information for one HTTP query made by the scraper."""
+
+    method: str
+    url: str
+    status_code: int | None = None
+    elapsed_seconds: float = Field(ge=0)
+
+
 class EgamersWorldScraper:
     """Fetch and parse public EGamersWorld HTML pages."""
 
-    def __init__(self, settings: AppSettings | None = None) -> None:
+    def __init__(self, settings: AppSettings | None = None, client: httpx.Client | None = None) -> None:
         self.settings = settings or load_settings()
         self.base_url = str(self.settings.scraper.base_url).rstrip("/") + "/"
-        self.client = httpx.Client(
+        self.query_timings: list[QueryTiming] = []
+        self._owns_client = client is None
+        self.client = client or httpx.Client(
             follow_redirects=True,
             timeout=self.settings.scraper.timeout_seconds,
             headers={
@@ -99,7 +113,8 @@ class EgamersWorldScraper:
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
-        self.client.close()
+        if self._owns_client:
+            self.client.close()
 
     def __enter__(self) -> EgamersWorldScraper:
         return self
@@ -110,7 +125,7 @@ class EgamersWorldScraper:
     def scrape(self, path_or_url: str = "/") -> ScrapedPage:
         """Fetch and parse one listing or content page."""
         url = self._absolute_url(path_or_url)
-        response = self.client.get(url)
+        response = self._get(url)
         self._raise_for_blocked_response(response)
         response.raise_for_status()
         return parse_html(response.text, str(response.url))
@@ -118,7 +133,7 @@ class EgamersWorldScraper:
     def scrape_match_detail(self, path_or_url: str) -> MatchDetail:
         """Fetch and parse one match detail page."""
         url = self._absolute_url(path_or_url)
-        response = self.client.get(url)
+        response = self._get(url)
         self._raise_for_blocked_response(response)
         response.raise_for_status()
         return parse_match_detail_html(response.text, str(response.url))
@@ -136,6 +151,36 @@ class EgamersWorldScraper:
 
     def _absolute_url(self, path_or_url: str) -> str:
         return urljoin(self.base_url, path_or_url)
+
+    def _get(self, url: str) -> httpx.Response:
+        started_at = perf_counter()
+        try:
+            response = self.client.get(url)
+        except httpx.HTTPError:
+            elapsed_seconds = perf_counter() - started_at
+            self.query_timings.append(QueryTiming(method="GET", url=url, elapsed_seconds=elapsed_seconds))
+            logger.debug("HTTP query failed after %.1f ms: GET %s", elapsed_seconds * 1000, url)
+            raise
+
+        try:
+            elapsed_seconds = response.elapsed.total_seconds()
+        except RuntimeError:
+            elapsed_seconds = perf_counter() - started_at
+        self.query_timings.append(
+            QueryTiming(
+                method="GET",
+                url=str(response.url),
+                status_code=response.status_code,
+                elapsed_seconds=elapsed_seconds,
+            )
+        )
+        logger.debug(
+            "HTTP query completed in %.1f ms: GET %s -> %s",
+            elapsed_seconds * 1000,
+            response.url,
+            response.status_code,
+        )
+        return response
 
     @staticmethod
     def _raise_for_blocked_response(response: httpx.Response) -> None:

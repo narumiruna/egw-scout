@@ -28,3 +28,4 @@ def test_scrape_command_help_shows_typer_options() -> None:
     assert "EGamersWorld path or full URL to scrape" in output
     assert "--details" in output
     assert "--json" in output
+    assert "--verbose" in output

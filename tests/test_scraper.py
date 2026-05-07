@@ -1,8 +1,15 @@
+import logging
+
+import httpx
+
 from egw_scout import EsportGame
 from egw_scout import MatchStatus
 from egw_scout import TeamSide
+from egw_scout.scraper import EgamersWorldScraper
 from egw_scout.scraper import parse_html
 from egw_scout.scraper import parse_match_detail_html
+from egw_scout.settings import AppSettings
+from egw_scout.settings import ScraperSettings
 
 HTML = """
 <!doctype html>
@@ -18,7 +25,7 @@ HTML = """
         "name": "Team Alpha vs Team Beta BO3",
         "url": "https://egamersworld.com/matches/team-alpha-vs-team-beta-abc123",
         "description": "CS2 upcoming match",
-        "startDate": "2026-05-06T12:00:00Z",
+        "startDate": "2027-05-06T12:00:00Z",
         "eventStatus": "https://schema.org/EventScheduled",
         "competitor": [
           {"@type": "SportsTeam", "name": "Team Alpha"},
@@ -59,6 +66,30 @@ def test_parse_html_extracts_page_metadata_links_and_matches() -> None:
     assert match.away.team.name == "Team Beta"
     assert match.tournament is not None
     assert match.tournament.name == "Premier Cup"
+
+
+def test_scraper_records_query_timing_for_each_http_request(caplog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, html=HTML, request=request)
+
+    settings = AppSettings(scraper=ScraperSettings(base_url="https://example.test/"))
+    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    scraper = EgamersWorldScraper(settings=settings, client=client)
+
+    try:
+        with caplog.at_level(logging.DEBUG, logger="egw_scout.scraper"):
+            scraper.scrape("/matches/upcoming-matches")
+    finally:
+        client.close()
+
+    assert len(scraper.query_timings) == 1
+    timing = scraper.query_timings[0]
+    assert timing.method == "GET"
+    assert timing.status_code == 200
+    assert str(timing.url) == "https://example.test/matches/upcoming-matches"
+    assert timing.elapsed_seconds >= 0
+    assert "HTTP query completed in" in caplog.text
+    assert "GET https://example.test/matches/upcoming-matches -> 200" in caplog.text
 
 
 def test_parse_match_detail_html_extracts_detail_sections() -> None:

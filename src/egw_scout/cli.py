@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Annotated
 
@@ -43,8 +44,13 @@ def scrape(
         bool,
         typer.Option("--json", help="Print raw JSON instead of Rich tables."),
     ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Enable debug logging, including per-query timings."),
+    ] = False,
 ) -> None:
     """Scrape a listing or match page."""
+    _configure_logging(verbose)
     try:
         with EgamersWorldScraper() as scraper:
             if details and _looks_like_match_path(path):
@@ -163,6 +169,12 @@ def _print_metadata(metadata: PageMetadata) -> None:
             border_style="cyan",
         )
     )
+
+
+def _configure_logging(verbose: bool) -> None:
+    if not verbose:
+        return
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(name)s:%(message)s", force=True)
 
 
 def _print_access_blocked(exc: AccessBlockedError) -> None:
